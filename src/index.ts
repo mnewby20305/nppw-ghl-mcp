@@ -528,6 +528,126 @@ Returns: Updated opportunity record.`,
   }
 );
 
+// ── Tool: update_contact ─────────────────────────────────────────────────────
+
+server.registerTool(
+  "ghl_update_contact",
+  {
+    title: "Update GHL Contact",
+    description: `Update an existing GoHighLevel contact's tags, notes, custom fields, or basic info.
+
+Args:
+  - contactId (string, required): The GHL contact ID to update
+  - firstName (string, optional): Update first name
+  - lastName (string, optional): Update last name
+  - phone (string, optional): Update phone number
+  - email (string, optional): Update email address
+  - companyName (string, optional): Update company name
+  - tags (string[], optional): Replace the contact's tags entirely with this list
+  - addTags (string[], optional): Add these tags without removing existing ones
+  - removeTags (string[], optional): Remove these specific tags
+  - notes (string, optional): Add a note to the contact's timeline
+  - customFields (object[], optional): Update custom fields — each item needs { id, value }
+  - source (string, optional): Update lead source
+
+Returns: Updated contact record.
+
+Examples:
+  - "Tag John Smith as a maintenance plan customer" → addTags=["maintenance-plan"]
+  - "Remove the cold-lead tag from Sarah" → removeTags=["cold-lead"]
+  - "Add a note to Mike's contact: Left voicemail 3x" → notes="Left voicemail 3x"
+  - "Update ABC Corp's phone number to 919-555-9999" → phone="919-555-9999"`,
+    inputSchema: z.object({
+      contactId: z.string().min(1).describe("GHL contact ID to update"),
+      firstName: z.string().optional().describe("Update first name"),
+      lastName: z.string().optional().describe("Update last name"),
+      phone: z.string().optional().describe("Update phone number"),
+      email: z.string().email().optional().describe("Update email address"),
+      companyName: z.string().optional().describe("Update company name"),
+      source: z.string().optional().describe("Update lead source"),
+      tags: z.array(z.string()).optional().describe("Replace all tags with this list"),
+      addTags: z.array(z.string()).optional().describe("Add these tags (keeps existing)"),
+      removeTags: z.array(z.string()).optional().describe("Remove these specific tags"),
+      notes: z.string().optional().describe("Add a note to the contact timeline"),
+      customFields: z.array(z.object({
+        id: z.string().describe("Custom field ID"),
+        value: z.union([z.string(), z.number(), z.boolean()]).describe("Field value"),
+      })).optional().describe("Custom field updates"),
+    }),
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async (params) => {
+    try {
+      // Step 1: If addTags or removeTags, fetch current tags first
+      let finalTags: string[] | undefined = params.tags;
+
+      if ((params.addTags?.length || params.removeTags?.length) && !params.tags) {
+        const current = await ghlGet<{ contact: GHLContact }>(`/contacts/${params.contactId}`);
+        const existing: string[] = (current.contact.tags as string[]) ?? [];
+
+        let merged = [...existing];
+        if (params.addTags?.length) {
+          for (const t of params.addTags) {
+            if (!merged.includes(t)) merged.push(t);
+          }
+        }
+        if (params.removeTags?.length) {
+          merged = merged.filter((t) => !params.removeTags!.includes(t));
+        }
+        finalTags = merged;
+      }
+
+      // Step 2: Build update body
+      const body: Record<string, unknown> = {};
+      if (params.firstName)    body.firstName = params.firstName;
+      if (params.lastName)     body.lastName = params.lastName;
+      if (params.phone)        body.phone = params.phone;
+      if (params.email)        body.email = params.email;
+      if (params.companyName)  body.companyName = params.companyName;
+      if (params.source)       body.source = params.source;
+      if (finalTags)           body.tags = finalTags;
+      if (params.customFields) body.customFields = params.customFields;
+
+      const results: string[] = [];
+
+      // Step 3: Update contact if there's anything to update
+      if (Object.keys(body).length > 0) {
+        const data = await ghlPut<{ contact: GHLContact }>(
+          `/contacts/${params.contactId}`,
+          body
+        );
+        const c = data.contact;
+        results.push(`✅ Contact updated`);
+        results.push(`ID:    ${c.id}`);
+        results.push(`Name:  ${[c.firstName, c.lastName].filter(Boolean).join(" ") || "—"}`);
+        results.push(`Phone: ${c.phone ?? "—"}`);
+        results.push(`Email: ${c.email ?? "—"}`);
+        results.push(`Tags:  ${(c.tags as string[] | undefined)?.join(", ") ?? "—"}`);
+      }
+
+      // Step 4: Add note if provided (separate API call)
+      if (params.notes) {
+        await ghlPost(`/contacts/${params.contactId}/notes`, {
+          body: params.notes,
+          userId: "",
+        });
+        results.push(`📝 Note added: "${params.notes}"`);
+      }
+
+      return {
+        content: [{ type: "text", text: results.join("\n") || "No changes made." }],
+      };
+    } catch (error) {
+      return { content: [{ type: "text", text: handleError(error) }] };
+    }
+  }
+);
+
 // ── Tool: trigger_workflow ───────────────────────────────────────────────────
 
 server.registerTool(
