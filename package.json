@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js & node dist/prospecting.js",
+    "start": "(node dist/index.js & node dist/prospecting.js & wait)",
     "start:mcp": "node dist/index.js",
     "start:prospecting": "node dist/prospecting.js",
     "dev": "tsx watch src/index.ts",
